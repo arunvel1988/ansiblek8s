@@ -1,0 +1,77 @@
+---
+- hosts: localhost
+  gather_facts: false
+
+  vars:
+    ansible_python_interpreter: '{{ ansible_playbook_python }}'
+    image_name: nginx
+
+  pre_tasks:
+    - name: Check Minikube's status.
+      command: minikube status
+      register: minikube_status
+      changed_when: false
+      ignore_errors: true
+
+    - name: Start Minikube if it's not running.
+      command: minikube start
+      when: "not minikube_status.stdout or 'Running' not in minikube_status.stdout"
+
+  tasks:
+    
+
+    # Create Kubernetes resources to run Hello Nginx
+    - name: Create a Deployment for Hello Nginx
+      k8s:
+        state: present
+        definition:
+          apiVersion: apps/v1
+          kind: Deployment
+          metadata:
+            name: hello-nginx
+            namespace: default
+          spec:
+            replicas: 1
+            selector:
+              matchLabels:
+                app: hello-nginx
+            template:
+              metadata:
+                labels:
+                  app: hello-nginx
+              spec:
+                containers:
+                - name: hello-nginx
+                  image: "{{ image_name }}"
+                  imagePullPolicy: IfNotPresent
+                  ports:
+                  - containerPort: 80
+
+    - name: Create a Service for Hello Nginx
+      k8s:
+        state: present
+        definition:
+          apiVersion: v1
+          kind: Service
+          metadata:
+            name: hello-nginx
+            namespace: default
+          spec:
+            ports:
+            - name: "8080"
+              port: 80
+              protocol: TCP
+              targetPort: 80
+            
+            selector:
+              app: hello-nginx
+            type: NodePort
+
+  post_tasks:
+    - name: Expose Hello Nginx on the host via Minikube.
+      command: minikube service hello-nginx --url=true
+      changed_when: false
+      register: minikube_service
+
+    - debug:
+        msg: "Hello Go URL: {{ minikube_service['stdout_lines'][0] }}"
