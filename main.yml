@@ -1,78 +1,106 @@
 ---
 - hosts: localhost
   gather_facts: false
-
   vars:
     ansible_python_interpreter: '{{ ansible_playbook_python }}'
-    image_name: arunvel1988/alpine_solr
-    replicas: 3
-
+    image_name: arunvel1988/c1
+    replicas: 1
+    svcname: appsvc
+    depname: appdep    
+    ingname: apping
   pre_tasks:
-    - name: Check Minikube's status.
+    - name: Check K8s Cluster status.
       command: minikube status
       register: minikube_status
       changed_when: false
       ignore_errors: true
-
-    - name: Start Minikube if it's not running.
+    - name: Start K8s Cluster if it's not running.
       command: minikube start
       when: "not minikube_status.stdout or 'Running' not in minikube_status.stdout"
 
   tasks:
-    
-
-    # Create Kubernetes resources to run Solr
-    - name: Create a Deployment for Solr
+    # Create Kubernetes resources to run App
+    - name: Create a Deployment for App
       k8s:
         state: present
         definition:
           apiVersion: apps/v1
           kind: Deployment
           metadata:
-            name: solr
+            name: "{{ depname }}"
             namespace: default
           spec:
             replicas: "{{ replicas }}"
             selector:
               matchLabels:
-                app: solr
+                app: web
             template:
               metadata:
                 labels:
-                  app: solr
+                  app: web
               spec:
                 containers:
-                - name: solr
+                - name: arun-c1
                   image: "{{ image_name }}"
                   imagePullPolicy: IfNotPresent
                   ports:
-                  - containerPort: 8983
+                  - containerPort: 8000
 
-    - name: Create a Service for Solr
+    - name: Create a Service for App
       k8s:
         state: present
         definition:
           apiVersion: v1
           kind: Service
           metadata:
-            name: solr
+            name: "{{ svcname }}"
             namespace: default
           spec:
             ports:
-            - name: "solr"
-              port: 8983
+            - name: "app"
+              port: 80
               protocol: TCP
-              targetPort: 8983
-            
+              targetPort: 8000            
             selector:
-              app: solr
+              app: web
             type: NodePort
 
-  post_tasks:
-    - name: Expose solr on the host via Minikube.
-      command: minikube service solr --url=true
-      changed_when: false
-      register: minikube_service
+    - name: Create a Ingress for App
+      k8s:
+        state: present
+        definition:
+          apiVersion: networking.k8s.io/v1beta1 
+          kind: Ingress
+          metadata:
+            name: "{{ ingname }}"
+            namespace: default
+            annotations:
+              nginx.ingress.kubernetes.io/rewrite-target: /
+          spec:
+            rules:
+            - host: app.info
+              http:
+                paths:
+                - path: /
+                  backend:
+                    serviceName: "{{ svcname }}"
+                    servicePort: 8000   
 
+  post_tasks:
+    - name: Application URL.
+      command: minikube service "{{ svcname }}" --url=true
+      changed_when: false
+      register: K8s_service
     - debug:
-        msg: "Solr URL: {{ minikube_service['stdout_lines'][0] }}"
+        msg: "Application URL: {{ K8s_service['stdout_lines'][0] }}"  
+
+    - name: Ingress URL.
+      shell: kubectl get ingress "{{ ingname }}"  | tail -1 | awk '{print $3}'
+      changed_when: false
+      register: K8s_ingress
+    - debug:
+        msg: "Ingress URL: {{ K8s_ingress['stdout_lines'][0] }}" 
+
+    - name: Open Ingress URL      
+      shell: firefox {{ K8s_ingress['stdout_lines'][0] }}      
+      
